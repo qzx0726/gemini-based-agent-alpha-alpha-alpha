@@ -121,6 +121,46 @@
             width: 100%;
             font-size: 14px;
         }
+        .api-status {
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .api-status.warning {
+            background-color: #fef3c7;
+            border: 1px solid #f59e0b;
+            color: #92400e;
+        }
+        .api-status.error {
+            background-color: #fee2e2;
+            border: 1px solid #ef4444;
+            color: #991b1b;
+        }
+        .api-status.success {
+            background-color: #d1fae5;
+            border: 1px solid #10b981;
+            color: #065f46;
+        }
+        .final-report {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 12px;
+            margin-top: 2rem;
+        }
+        .final-report h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+        .final-report-content {
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800">
@@ -137,6 +177,8 @@
             </div>
             <p class="mt-2 text-gray-600">Gemini 模型驱动，支持任务拆分、执行与审阅。</p>
         </header>
+        
+        <div id="apiStatusContainer"></div>
         
         <div class="mb-6 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-md" role="alert">
             <p class="font-bold">⚠️ 安全警告</p>
@@ -183,6 +225,13 @@
             <section id="finalResultSection" class="hidden">
                 <h2 class="text-2xl font-bold mb-4 border-b pb-2">最终成果</h2>
                 <div id="finalResultContainer" class="p-6 bg-white rounded-lg shadow prose max-w-none"></div>
+            </section>
+            
+            <section id="finalReportSection" class="hidden">
+                <div class="final-report">
+                    <h2>📊 任务完成报告</h2>
+                    <div id="finalReportContent" class="final-report-content"></div>
+                </div>
             </section>
         </div>
     </div>
@@ -257,6 +306,27 @@
                             </select>
                             <input type="text" id="customReviewModel" class="custom-model-input hidden" placeholder="输入自定义模型名称，如: gemini-1.5-flash-latest">
                         </div>
+                        <div>
+                            <label for="outputModel" class="block text-sm font-medium text-gray-700 mb-1">输出总结模型</label>
+                            <select id="outputModel" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (推荐)</option>
+                                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                <option value="custom">自定义模型</option>
+                            </select>
+                            <input type="text" id="customOutputModel" class="custom-model-input hidden" placeholder="输入自定义模型名称，如: gemini-1.5-flash-latest">
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <h4 class="text-base font-medium text-gray-900">API设置</h4>
+                        <div>
+                            <label for="apiRequestDelay" class="block text-sm font-medium text-gray-700 mb-1">API请求间隔(秒)</label>
+                            <input type="number" id="apiRequestDelay" min="1" max="60" value="6" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                            <p class="text-xs text-gray-500 mt-1">增加此值可以避免API速率限制错误</p>
+                        </div>
+                        <div>
+                            <label for="maxRetries" class="block text-sm font-medium text-gray-700 mb-1">最大重试次数</label>
+                            <input type="number" id="maxRetries" min="1" max="10" value="3" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
                     </div>
                 </div>
                 <div class="mt-6">
@@ -287,6 +357,8 @@
             const refreshSavedCodesBtn = document.getElementById('refreshSavedCodesBtn');
             const finalResultSection = document.getElementById('finalResultSection');
             const finalResultContainer = document.getElementById('finalResultContainer');
+            const finalReportSection = document.getElementById('finalReportSection');
+            const finalReportContent = document.getElementById('finalReportContent');
             const confirmationModal = document.getElementById('confirmationModal');
             const modalTool = document.getElementById('modalTool');
             const modalQuery = document.getElementById('modalQuery');
@@ -300,9 +372,14 @@
             const planningModel = document.getElementById('planningModel');
             const executionModel = document.getElementById('executionModel');
             const reviewModel = document.getElementById('reviewModel');
+            const outputModel = document.getElementById('outputModel');
             const customPlanningModel = document.getElementById('customPlanningModel');
             const customExecutionModel = document.getElementById('customExecutionModel');
             const customReviewModel = document.getElementById('customReviewModel');
+            const customOutputModel = document.getElementById('customOutputModel');
+            const apiRequestDelay = document.getElementById('apiRequestDelay');
+            const maxRetries = document.getElementById('maxRetries');
+            const apiStatusContainer = document.getElementById('apiStatusContainer');
             
             // --- 状态管理 ---
             let state = {};
@@ -310,6 +387,10 @@
             let modalResolver = null;
             let savedCodes = {}; // 保存的代码
             let selectedCodeId = null; // 当前选中的代码ID
+            let apiCallCount = 0; // API调用计数
+            let lastApiCallTime = 0; // 上次API调用时间
+            let apiErrorCount = 0; // API错误计数
+            let executionHistory = []; // 存储每个任务的执行历史
             
             // --- 默认模型组设为 gemini-2.0 系列 ---
             let settings = {
@@ -317,9 +398,13 @@
                 planningModel: 'gemini-2.0-flash-exp',
                 executionModel: 'gemini-2.0-flash-exp',
                 reviewModel: 'gemini-2.0-flash-exp',
+                outputModel: 'gemini-2.0-flash-exp',
                 customPlanningModel: '',
                 customExecutionModel: '',
-                customReviewModel: ''
+                customReviewModel: '',
+                customOutputModel: '',
+                apiRequestDelay: 6, // 默认6秒间隔
+                maxRetries: 3 // 默认最大重试3次
             };
             
             function loadSettings() {
@@ -355,6 +440,19 @@
                         } else {
                             reviewModel.value = settings.reviewModel;
                         }
+                        
+                        // 设置输出模型
+                        if (settings.customOutputModel) {
+                            outputModel.value = 'custom';
+                            customOutputModel.value = settings.customOutputModel;
+                            customOutputModel.classList.remove('hidden');
+                        } else {
+                            outputModel.value = settings.outputModel || 'gemini-2.0-flash-exp';
+                        }
+                        
+                        // 设置API参数
+                        apiRequestDelay.value = settings.apiRequestDelay || 6;
+                        maxRetries.value = settings.maxRetries || 3;
                     } catch (e) { console.error('加载设置失败:', e); }
                 }
             }
@@ -389,6 +487,19 @@
                     settings.customReviewModel = '';
                 }
                 
+                // 保存输出模型
+                if (outputModel.value === 'custom') {
+                    settings.customOutputModel = customOutputModel.value;
+                    settings.outputModel = '';
+                } else {
+                    settings.outputModel = outputModel.value;
+                    settings.customOutputModel = '';
+                }
+                
+                // 保存API参数
+                settings.apiRequestDelay = parseInt(apiRequestDelay.value) || 6;
+                settings.maxRetries = parseInt(maxRetries.value) || 3;
+                
                 localStorage.setItem('agentSettings', JSON.stringify(settings));
             }
             
@@ -397,6 +508,20 @@
                     return customInput.value || 'gemini-2.0-flash-exp';
                 }
                 return selectElement.value;
+            }
+            
+            // 显示API状态
+            function showApiStatus(message, type = 'warning') {
+                apiStatusContainer.innerHTML = `
+                    <div class="api-status ${type}">
+                        ${message}
+                    </div>
+                `;
+                
+                // 5秒后自动隐藏
+                setTimeout(() => {
+                    apiStatusContainer.innerHTML = '';
+                }, 5000);
             }
             
             // --- WebSocket 连接 (仅用于工具服务器) ---
@@ -466,17 +591,24 @@
                 executionContainer.appendChild(executionDiv);
                 executionSection.classList.remove('hidden');
                 
-                const maxRetries = 3;
+                const maxRetriesCount = parseInt(settings.maxRetries) || 3;
                 let lastOutput = '';
                 let lastFeedback = '';
+                let taskExecutionHistory = {
+                    taskIndex,
+                    task,
+                    toolChain: [],
+                    output: '',
+                    status: 'running'
+                };
                 
-                for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
+                for (let retryCount = 0; retryCount <= maxRetriesCount; retryCount++) {
                     if (retryCount > 0) {
                         await logStep(`  [任务 ${taskIndex + 1}] 第 ${retryCount} 次尝试修正...`, "🛠️");
                     }
                     try {
                         // 执行AI决策并执行
-                        const result = await executeAITask(task, taskIndex, retryCount, executionDiv);
+                        const result = await executeAITask(task, taskIndex, retryCount, executionDiv, taskExecutionHistory);
                         
                         // 检查是否重新规划了
                         if (result.replanned) {
@@ -486,6 +618,7 @@
                         }
                         
                         lastOutput = result.output;
+                        taskExecutionHistory.output = result.output;
                         
                         // 审阅AI评估结果
                         await logStep(`  [任务 ${taskIndex + 1}] 交给审阅AI评估...`, "🧐");
@@ -494,16 +627,21 @@
                         if (reviewResult.passed) {
                             await logStep(`  [任务 ${taskIndex + 1}] 审阅通过！`, "✅");
                             state.completedOutputs.push({ task, output: result.output });
+                            taskExecutionHistory.status = 'completed';
                             updateTaskStatus(taskId, 'completed');
                             updateExecutionDisplay(executionDiv, 'completed', result.output);
+                            executionHistory.push(taskExecutionHistory);
                             return;
                         } else {
                             lastFeedback = reviewResult.feedback;
                             await logStep(`  [任务 ${taskIndex + 1}] 审阅不通过。反馈: ${lastFeedback}`, "👎");
                             updateExecutionDisplay(executionDiv, 'failed', result.output, lastFeedback);
                             
-                            if (retryCount >= maxRetries) {
-                                throw new Error(`任务 "${task}" 在 ${maxRetries} 次重试后仍然未通过审阅。`);
+                            if (retryCount >= maxRetriesCount) {
+                                taskExecutionHistory.status = 'failed';
+                                taskExecutionHistory.error = lastFeedback;
+                                executionHistory.push(taskExecutionHistory);
+                                throw new Error(`任务 "${task}" 在 ${maxRetriesCount} 次重试后仍然未通过审阅。`);
                             }
                         }
                     } catch (error) {
@@ -513,7 +651,10 @@
                         lastFeedback = `执行过程中发生异常: ${errorMessage}`;
                         lastOutput = `[异常] ${errorMessage}`;
                         
-                        if (retryCount >= maxRetries) {
+                        if (retryCount >= maxRetriesCount) {
+                            taskExecutionHistory.status = 'failed';
+                            taskExecutionHistory.error = errorMessage;
+                            executionHistory.push(taskExecutionHistory);
                             updateTaskStatus(taskId, 'failed');
                             updateExecutionDisplay(executionDiv, 'failed', lastOutput, lastFeedback);
                             throw error;
@@ -521,12 +662,15 @@
                     }
                 }
                 
+                taskExecutionHistory.status = 'failed';
+                taskExecutionHistory.error = lastFeedback;
+                executionHistory.push(taskExecutionHistory);
                 updateTaskStatus(taskId, 'failed');
                 updateExecutionDisplay(executionDiv, 'failed', lastOutput, lastFeedback);
-                throw new Error(`任务 "${task}" 在 ${maxRetries} 次重试后仍然失败。`);
+                throw new Error(`任务 "${task}" 在 ${maxRetriesCount} 次重试后仍然失败。`);
             }
             
-            async function executeAITask(task, taskIndex, retryCount, executionDiv) {
+            async function executeAITask(task, taskIndex, retryCount, executionDiv, taskExecutionHistory) {
                 await logStep(`  [任务 ${taskIndex + 1}] 执行AI开始处理...`, "🤖");
                 
                 let currentCode = '';
@@ -538,6 +682,7 @@
                     // 执行AI决策
                     const decision = await makeExecutionDecision(task, currentCode, toolChain, retryCount);
                     toolChain.push(decision);
+                    taskExecutionHistory.toolChain.push(decision);
                     
                     // 显示工具链步骤
                     addToolChainStep(executionDiv, decision);
@@ -741,11 +886,45 @@
                 return JSON.parse(reviewStr);
             }
             
+            async function generateFinalReport() {
+                await logStep("\n正在生成最终报告...", "📝");
+                
+                const prompt = `你是一个专业的输出师，负责整合所有信息并生成最终的任务完成报告。
+
+用户原始需求: "${state.mainTask}"
+
+任务规划: ${JSON.stringify(state.plan, null, 2)}
+
+执行历史: ${JSON.stringify(executionHistory, null, 2)}
+
+任务完成结果: ${JSON.stringify(state.completedOutputs, null, 2)}
+
+请根据用户原始需求，用可可爱爱的语气，整合各个地方的输出，给出最终输出。简短有力！
+请直接生成报告内容，不需要JSON格式。`;
+                
+                const modelName = getModelName(outputModel, customOutputModel);
+                const report = await callGemini(prompt, false, modelName);
+                
+                // 显示最终报告
+                finalReportContent.innerHTML = `
+                    <div class="prose prose-invert max-w-none">
+                        ${report.replace(/\n/g, '<br>')}
+                    </div>
+                `;
+                finalReportSection.classList.remove('hidden');
+                
+                await logStep("最终报告生成完成！", "✅");
+            }
+            
             async function finalizeTask() {
                 await logStep("\n所有任务块执行完毕，正在整合最终成果...", "🎉");
                 const finalResult = state.completedOutputs.map(item => `<h3>${item.task}</h3>\n\n<pre class="whitespace-pre-wrap text-sm bg-gray-100 p-4 rounded-md">${item.output.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`).join('\n\n---\n\n');
                 finalResultContainer.innerHTML = finalResult;
                 finalResultSection.classList.remove('hidden');
+                
+                // 生成最终报告
+                await generateFinalReport();
+                
                 await logStep("任务全部完成！", "🏆");
                 setBusy(false);
             }
@@ -785,6 +964,7 @@
                     return result.codes || [];
                 } catch (error) {
                     console.error('获取代码列表错误:', error);
+                    // 不显示错误，因为后端可能没有运行
                     return [];
                 }
             }
@@ -902,11 +1082,24 @@
             }
 
             async function callGemini(prompt, useJson = false, model = 'gemini-2.0-flash-exp') {
-                const maxRetries = 3;
+                // 实现API调用速率限制
+                const now = Date.now();
+                const timeSinceLastCall = now - lastApiCallTime;
+                const minDelay = (settings.apiRequestDelay || 6) * 1000; // 转换为毫秒
+                
+                if (timeSinceLastCall < minDelay) {
+                    const waitTime = minDelay - timeSinceLastCall;
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
+                
+                lastApiCallTime = Date.now();
+                apiCallCount++;
+                
+                const maxRetriesCount = parseInt(settings.maxRetries) || 3;
                 let lastError = null;
                 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${state.apiKey}`;
                 
-                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                for (let attempt = 1; attempt <= maxRetriesCount; attempt++) {
                     try {
                         const payload = { contents: [{ parts: [{ text: prompt }] }] };
                         if (useJson) {
@@ -925,6 +1118,24 @@
                             try {
                                const errorBody = JSON.parse(errorBodyText);
                                errorMessage += ` ${errorBody.error?.message || '未知错误'}`;
+                               
+                               // 检查是否是速率限制错误
+                               if (response.status === 429) {
+                                   const retryAfter = errorBody.error?.details?.[0]?.retryAfter?.seconds || 60;
+                                   errorMessage += ` 请在 ${retryAfter} 秒后重试。`;
+                                   
+                                   // 显示API状态
+                                   showApiStatus(`API速率限制已达到，请在 ${retryAfter} 秒后重试`, 'error');
+                                   
+                                   // 如果是速率限制，等待指定时间后重试
+                                   if (attempt < maxRetriesCount) {
+                                       await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+                                       continue;
+                                   }
+                               } else if (response.status === 503) {
+                                   errorMessage += ` 模型过载，请稍后重试。`;
+                                   showApiStatus('模型过载，请稍后重试', 'warning');
+                               }
                             } catch(e) {
                                errorMessage += ` 响应内容: ${errorBodyText}`;
                             }
@@ -934,6 +1145,8 @@
                         const data = await response.json();
                         
                         if (data.candidates && data.candidates.length > 0 && data.candidates[0]?.content?.parts?.[0]) {
+                            // 重置错误计数
+                            apiErrorCount = 0;
                             return data.candidates[0].content.parts[0].text;
                         }
                         
@@ -945,10 +1158,17 @@
 
                     } catch (error) {
                         lastError = error;
-                        console.warn(`Gemini API 调用失败 (尝试 ${attempt}/${maxRetries}):`, error);
+                        apiErrorCount++;
+                        console.warn(`Gemini API 调用失败 (尝试 ${attempt}/${maxRetriesCount}):`, error);
                         
-                        if (attempt < maxRetries) {
-                            const delay = Math.pow(2, attempt) * 1000;
+                        // 如果连续错误超过5次，显示警告
+                        if (apiErrorCount >= 5) {
+                            showApiStatus('API连续调用失败，请检查网络连接或API密钥', 'error');
+                        }
+                        
+                        if (attempt < maxRetriesCount) {
+                            // 指数退避重试
+                            const delay = Math.min(Math.pow(2, attempt) * 1000, 30000); // 最大30秒
                             await logStep(`API 调用失败，${delay/1000}秒后重试...`, "⏱️");
                             await new Promise(resolve => setTimeout(resolve, delay));
                         }
@@ -1284,13 +1504,16 @@
                 logSection.classList.add('hidden'); 
                 savedCodesSection.classList.add('hidden');
                 finalResultSection.classList.add('hidden'); 
+                finalReportSection.classList.add('hidden');
                 planContainer.innerHTML = ''; 
                 executionContainer.innerHTML = '';
                 logContainer.innerHTML = ''; 
                 savedCodesContainer.innerHTML = '';
                 finalResultContainer.innerHTML = ''; 
+                finalReportContent.innerHTML = '';
                 savedCodes = {};
                 selectedCodeId = null;
+                executionHistory = [];
             }
             
             function validateInputs() { 
@@ -1394,6 +1617,14 @@
                     customReviewModel.classList.remove('hidden');
                 } else {
                     customReviewModel.classList.add('hidden');
+                }
+            });
+            
+            outputModel.addEventListener('change', (e) => {
+                if (e.target.value === 'custom') {
+                    customOutputModel.classList.remove('hidden');
+                } else {
+                    customOutputModel.classList.add('hidden');
                 }
             });
             
