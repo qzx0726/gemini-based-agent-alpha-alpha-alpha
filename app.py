@@ -3,8 +3,10 @@ import json
 import contextlib
 import subprocess
 import os
+import uuid
+import time
 from datetime import datetime
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
 # --- 初始化 ---
@@ -12,12 +14,20 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a_very_secret_key_for_tools!'
 socketio = SocketIO(app, cors_allowed_origins="*") # 允许跨域，方便调试
 
+# 内存存储保存的代码（生产环境应使用数据库）
+saved_codes_store = {}
+
 # --- 工具函数 ---
 
-def run_python_code(code):
+def execute_python_code(code):
     """
-    安全地执行Python代码并捕获其标准输出。
+    执行Python代码并返回详细结果
     """
+    start_time = time.time()
+    return_code = 0
+    output = ""
+    error = ""
+    
     # 创建一个字符串流来捕获print()的输出
     string_io = io.StringIO()
     try:
@@ -26,13 +36,31 @@ def run_python_code(code):
             # 在一个受限的全局环境中执行代码
             exec(code, {})
         # 获取捕获到的输出
-        result = string_io.getvalue()
-        if not result:
-            return "[代码已执行，但没有产生任何打印输出]"
-        return result
+        output = string_io.getvalue()
+        if not output:
+            output = "[代码已执行，但没有产生任何打印输出]"
     except Exception as e:
         # 如果代码执行出错，返回错误信息
-        return f"[代码执行错误]: {e}"
+        error = f"[代码执行错误]: {e}"
+        return_code = 1
+    
+    execution_time = time.time() - start_time
+    
+    return {
+        "output": output,
+        "error": error,
+        "return_code": return_code,
+        "execution_time": execution_time
+    }
+
+def run_python_code(code):
+    """
+    安全地执行Python代码并捕获其标准输出。
+    """
+    result = execute_python_code(code)
+    if result["error"]:
+        return result["error"]
+    return result["output"]
 
 def run_command(command):
     """
@@ -58,7 +86,7 @@ def run_command(command):
         output = result.stdout
         if result.stderr:
             output += "\n--- STDERR ---\n" + result.stderr
-        return output if output else "[命令已执行，但没有输出]"
+        return {"result": output, "error": None}
     except subprocess.CalledProcessError as e:
         # 捕获命令执行失败的情况
         error_message = f"命令执行失败，返回码: {e.returncode}"
@@ -66,10 +94,10 @@ def run_command(command):
             error_message += f"\n--- STDOUT ---\n{e.stdout}"
         if e.stderr:
             error_message += f"\n--- STDERR ---\n{e.stderr}"
-        return error_message
+        return {"result": None, "error": error_message}
     except Exception as e:
         # 捕获其他可能的错误
-        return f"[命令执行时发生未知错误]: {e}"
+        return {"result": None, "error": f"[命令执行时发生未知错误]: {e}"}
 
 
 # --- WebSocket 事件处理 ---
@@ -97,7 +125,6 @@ def handle_tool_use(data):
     
     result = None
     try:
-        # --- [核心修改] 新增 run_command 工具的路由 ---
         if tool_name == 'run_command':
             result = run_command(str(query))
         elif tool_name == 'run_code':
@@ -113,21 +140,98 @@ def handle_tool_use(data):
 
         print(f"工具 '{tool_name}' 执行结果: {result}")
         # 将结果和原始请求ID一起发回
-        emit('tool_result', {'result': str(result), 'request_id': request_id})
+        emit('tool_result', {'result': result, 'request_id': request_id})
 
     except Exception as e:
         print(f"工具 '{tool_name}' 执行失败: {e}")
         emit('tool_result', {
-            'result': f"[工具执行失败]: {e}",
+            'result': {"result": None, "error": f"[工具执行失败]: {e}"},
             'is_error': True,
             'request_id': request_id
         })
 
 # --- Flask 路由 ---
+
 @app.route('/')
 def index():
     """渲染主页面"""
     return render_template('index.html')
+
+# 代码管理API
+@app.route('/api/save_code', methods=['POST'])
+def save_code():
+    """保存代码到后端"""
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data or 'code' not in data:
+            return jsonify({"error": "缺少必要参数"}), 400
+            
+        code_id = str(uuid.uuid4())
+        saved_codes_store[code_id] = {
+            "id": code_id,
+            "name": data['name'],
+            "code": data['code'],
+            "created_at": datetime.now().isoformat()
+        }
+        return jsonify({"code_id": code_id, "message": "代码保存成功"})
+    except Exception as e:
+        return jsonify({"error": f"保存代码失败: {str(e)}"}), 500
+
+@app.route('/api/saved_codes', methods=['GET'])
+def get_saved_codes():
+    """获取已保存的代码列表"""
+    try:
+        codes = list(saved_codes_store.values())
+        return jsonify({"codes": codes})
+    except Exception as e:
+        return jsonify({"error": f"获取代码列表失败: {str(e)}"}), 500
+
+@app.route('/api/run_saved_code', methods=['POST'])
+def run_saved_code():
+    """运行已保存的代码"""
+    try:
+        data = request.get_json()
+        if not data or 'code_id' not in data:
+            return jsonify({"error": "缺少code_id参数"}), 400
+            
+        code_id = data['code_id']
+        if code_id not in saved_codes_store:
+            return jsonify({"error": "代码不存在"}), 404
+        
+        code = saved_codes_store[code_id]["code"]
+        result = execute_python_code(code)
+        
+        return jsonify({
+            "output": result["output"],
+            "error": result["error"],
+            "return_code": result["return_code"],
+            "execution_time": result["execution_time"]
+        })
+    except Exception as e:
+        return jsonify({"error": f"运行保存的代码失败: {str(e)}"}), 500
+
+@app.route('/api/saved_code/<code_id>', methods=['GET'])
+def get_saved_code(code_id):
+    """获取特定代码的详细信息"""
+    try:
+        if code_id not in saved_codes_store:
+            return jsonify({"error": "代码不存在"}), 404
+        
+        return jsonify(saved_codes_store[code_id])
+    except Exception as e:
+        return jsonify({"error": f"获取代码详情失败: {str(e)}"}), 500
+
+@app.route('/api/saved_code/<code_id>', methods=['DELETE'])
+def delete_saved_code(code_id):
+    """删除已保存的代码"""
+    try:
+        if code_id not in saved_codes_store:
+            return jsonify({"error": "代码不存在"}), 404
+        
+        del saved_codes_store[code_id]
+        return jsonify({"message": "代码删除成功"})
+    except Exception as e:
+        return jsonify({"error": f"删除代码失败: {str(e)}"}), 500
 
 if __name__ == '__main__':
     print("工具箱服务器启动，请在浏览器中访问 http://127.0.0.1:5000")

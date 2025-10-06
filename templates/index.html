@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>自主任务完成代理 (前端API调用版)</title>
+    <title>自主任务完成代理 (重构版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -23,11 +23,109 @@
         #serverStatus { transition: all 0.3s ease; }
         #confirmationModal, #settingsModal { transition: opacity 0.3s ease; }
         .settings-button { position: absolute; top: 1rem; right: 1rem; z-index: 10; }
+        .code-editor { 
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace; 
+            background-color: #1e1e1e; 
+            color: #d4d4d4; 
+            border-radius: 6px; 
+            padding: 12px; 
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .code-output {
+            background-color: #f5f5f5;
+            border: 1px solid #e1e1e1;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .tool-chain {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .tool-step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .tool-step:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .tool-icon {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        .tool-icon.write { background-color: #4CAF50; }
+        .tool-icon.debug { background-color: #FF9800; }
+        .tool-icon.run { background-color: #2196F3; }
+        .tool-icon.save { background-color: #9C27B0; }
+        .tool-icon.think { background-color: #607D8B; }
+        .tool-icon.command { background-color: #795548; }
+        .tool-content {
+            flex-grow: 1;
+        }
+        .tool-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .saved-codes {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #e1e1e1;
+            border-radius: 6px;
+            padding: 8px;
+            background-color: #f9f9f9;
+        }
+        .saved-code-item {
+            padding: 8px;
+            margin-bottom: 8px;
+            background-color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .saved-code-item:hover {
+            background-color: #f0f0f0;
+        }
+        .saved-code-item.selected {
+            background-color: #e3f2fd;
+            border: 1px solid #2196F3;
+        }
+        .custom-model-input {
+            margin-top: 8px;
+            padding: 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            width: 100%;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800">
     <!-- 主容器 -->
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+    <div class="container mx-auto p-4 md:p-8 max-w-5xl">
         
         <header class="text-center mb-8 relative">
             <button id="settingsButton" class="settings-button bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500 transition duration-300 ease-in-out">
@@ -37,18 +135,18 @@
                 <h1 class="text-3xl md:text-4xl font-bold text-gray-900">自主任务完成代理</h1>
                 <span id="serverStatus" class="h-4 w-4 rounded-full bg-red-500" title="未连接到工具服务器"></span>
             </div>
-            <p class="mt-2 text-gray-600">Gemini 模型驱动，支持并行任务处理与人工确认。</p>
+            <p class="mt-2 text-gray-600">Gemini 模型驱动，支持任务拆分、执行与审阅。</p>
         </header>
         
         <div class="mb-6 bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-md" role="alert">
-            <p class="font-bold"⚠️ 安全警告</p>
+            <p class="font-bold">⚠️ 安全警告</p>
             <p>您的 Gemini API Key 将直接在浏览器中用于调用API。请勿在公共网站或不受信任的环境中使用此方法，因为它会暴露您的密钥。此方法仅适用于本地开发或个人项目。</p>
             <input type="password" id="apiKeyInput" placeholder="在此输入你的 Gemini API Key" class="mt-2 w-full p-2 border border-red-300 rounded-md focus:ring-2 focus:ring-red-500 focus:outline-none">
         </div>
         
         <div class="bg-white p-6 rounded-lg shadow-md mb-8">
             <div class="flex flex-col md:flex-row gap-4">
-                <input type="text" id="mainTaskInput" placeholder="例如：安装pandas库，然后用它分析一段数据" class="flex-grow p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                <input type="text" id="mainTaskInput" placeholder="例如：分析一个CSV文件中的销售数据并生成可视化报告" class="flex-grow p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
                 <button id="startButton" class="w-full md:w-auto bg-blue-600 text-white font-semibold py-3 px-6 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300 ease-in-out flex items-center justify-center disabled:bg-gray-400 disabled:cursor-not-allowed">
                     <span id="buttonText">开始任务</span>
                     <div id="buttonLoader" class="loader ml-2 hidden"></div>
@@ -61,10 +159,27 @@
                 <h2 class="text-2xl font-bold mb-4 border-b pb-2">任务计划</h2>
                 <div id="planContainer"></div>
             </section>
+            
+            <section id="executionSection" class="hidden">
+                <h2 class="text-2xl font-bold mb-4 border-b pb-2">执行过程</h2>
+                <div id="executionContainer"></div>
+            </section>
+            
             <section id="logSection" class="hidden">
                 <h2 class="text-2xl font-bold mb-4 border-b pb-2">执行日志</h2>
                 <div id="logContainer" class="p-4 bg-gray-900 text-white rounded-md font-mono text-sm max-h-96 overflow-y-auto space-y-2"></div>
             </section>
+            
+            <section id="savedCodesSection" class="hidden">
+                <h2 class="text-2xl font-bold mb-4 border-b pb-2">已保存的代码</h2>
+                <div class="mb-4">
+                    <button id="refreshSavedCodesBtn" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition">
+                        刷新代码列表
+                    </button>
+                </div>
+                <div id="savedCodesContainer" class="saved-codes"></div>
+            </section>
+            
             <section id="finalResultSection" class="hidden">
                 <h2 class="text-2xl font-bold mb-4 border-b pb-2">最终成果</h2>
                 <div id="finalResultContainer" class="p-6 bg-white rounded-lg shadow prose max-w-none"></div>
@@ -118,23 +233,29 @@
                         <div>
                             <label for="planningModel" class="block text-sm font-medium text-gray-700 mb-1">任务规划模型</label>
                             <select id="planningModel" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (推荐)</option>
-                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (推荐)</option>
+                                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                <option value="custom">自定义模型</option>
                             </select>
+                            <input type="text" id="customPlanningModel" class="custom-model-input hidden" placeholder="输入自定义模型名称，如: gemini-1.5-flash-latest">
                         </div>
                         <div>
                             <label for="executionModel" class="block text-sm font-medium text-gray-700 mb-1">任务执行模型</label>
                             <select id="executionModel" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (推荐)</option>
-                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (推荐)</option>
+                                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                <option value="custom">自定义模型</option>
                             </select>
+                            <input type="text" id="customExecutionModel" class="custom-model-input hidden" placeholder="输入自定义模型名称，如: gemini-1.5-flash-latest">
                         </div>
                         <div>
-                            <label for="evaluationModel" class="block text-sm font-medium text-gray-700 mb-1">结果评估模型</label>
-                            <select id="evaluationModel" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (推荐)</option>
-                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                            <label for="reviewModel" class="block text-sm font-medium text-gray-700 mb-1">结果审阅模型</label>
+                            <select id="reviewModel" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (推荐)</option>
+                                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                <option value="custom">自定义模型</option>
                             </select>
+                            <input type="text" id="customReviewModel" class="custom-model-input hidden" placeholder="输入自定义模型名称，如: gemini-1.5-flash-latest">
                         </div>
                     </div>
                 </div>
@@ -157,8 +278,13 @@
             const serverStatus = document.getElementById('serverStatus');
             const planSection = document.getElementById('planSection');
             const planContainer = document.getElementById('planContainer');
+            const executionSection = document.getElementById('executionSection');
+            const executionContainer = document.getElementById('executionContainer');
             const logSection = document.getElementById('logSection');
             const logContainer = document.getElementById('logContainer');
+            const savedCodesSection = document.getElementById('savedCodesSection');
+            const savedCodesContainer = document.getElementById('savedCodesContainer');
+            const refreshSavedCodesBtn = document.getElementById('refreshSavedCodesBtn');
             const finalResultSection = document.getElementById('finalResultSection');
             const finalResultContainer = document.getElementById('finalResultContainer');
             const confirmationModal = document.getElementById('confirmationModal');
@@ -173,19 +299,27 @@
             const autoApproveToggle = document.getElementById('autoApproveToggle');
             const planningModel = document.getElementById('planningModel');
             const executionModel = document.getElementById('executionModel');
-            const evaluationModel = document.getElementById('evaluationModel');
+            const reviewModel = document.getElementById('reviewModel');
+            const customPlanningModel = document.getElementById('customPlanningModel');
+            const customExecutionModel = document.getElementById('customExecutionModel');
+            const customReviewModel = document.getElementById('customReviewModel');
             
             // --- 状态管理 ---
             let state = {};
             const toolResponses = new Map();
             let modalResolver = null;
+            let savedCodes = {}; // 保存的代码
+            let selectedCodeId = null; // 当前选中的代码ID
             
-            // --- 默认模型组设为 gemini-2.5 系列 ---
+            // --- 默认模型组设为 gemini-2.0 系列 ---
             let settings = {
                 autoApprove: false,
-                planningModel: 'gemini-2.5-flash',
-                executionModel: 'gemini-2.5-flash',
-                evaluationModel: 'gemini-2.5-flash'
+                planningModel: 'gemini-2.0-flash-exp',
+                executionModel: 'gemini-2.0-flash-exp',
+                reviewModel: 'gemini-2.0-flash-exp',
+                customPlanningModel: '',
+                customExecutionModel: '',
+                customReviewModel: ''
             };
             
             function loadSettings() {
@@ -194,19 +328,75 @@
                     try {
                         settings = JSON.parse(savedSettings);
                         autoApproveToggle.checked = settings.autoApprove;
-                        planningModel.value = settings.planningModel;
-                        executionModel.value = settings.executionModel;
-                        evaluationModel.value = settings.evaluationModel;
+                        
+                        // 设置规划模型
+                        if (settings.customPlanningModel) {
+                            planningModel.value = 'custom';
+                            customPlanningModel.value = settings.customPlanningModel;
+                            customPlanningModel.classList.remove('hidden');
+                        } else {
+                            planningModel.value = settings.planningModel;
+                        }
+                        
+                        // 设置执行模型
+                        if (settings.customExecutionModel) {
+                            executionModel.value = 'custom';
+                            customExecutionModel.value = settings.customExecutionModel;
+                            customExecutionModel.classList.remove('hidden');
+                        } else {
+                            executionModel.value = settings.executionModel;
+                        }
+                        
+                        // 设置审阅模型
+                        if (settings.customReviewModel) {
+                            reviewModel.value = 'custom';
+                            customReviewModel.value = settings.customReviewModel;
+                            customReviewModel.classList.remove('hidden');
+                        } else {
+                            reviewModel.value = settings.reviewModel;
+                        }
                     } catch (e) { console.error('加载设置失败:', e); }
                 }
             }
             
             function saveSettings() {
                 settings.autoApprove = autoApproveToggle.checked;
-                settings.planningModel = planningModel.value;
-                settings.executionModel = executionModel.value;
-                settings.evaluationModel = evaluationModel.value;
+                
+                // 保存规划模型
+                if (planningModel.value === 'custom') {
+                    settings.customPlanningModel = customPlanningModel.value;
+                    settings.planningModel = '';
+                } else {
+                    settings.planningModel = planningModel.value;
+                    settings.customPlanningModel = '';
+                }
+                
+                // 保存执行模型
+                if (executionModel.value === 'custom') {
+                    settings.customExecutionModel = customExecutionModel.value;
+                    settings.executionModel = '';
+                } else {
+                    settings.executionModel = executionModel.value;
+                    settings.customExecutionModel = '';
+                }
+                
+                // 保存审阅模型
+                if (reviewModel.value === 'custom') {
+                    settings.customReviewModel = customReviewModel.value;
+                    settings.reviewModel = '';
+                } else {
+                    settings.reviewModel = reviewModel.value;
+                    settings.customReviewModel = '';
+                }
+                
                 localStorage.setItem('agentSettings', JSON.stringify(settings));
+            }
+            
+            function getModelName(selectElement, customInput) {
+                if (selectElement.value === 'custom') {
+                    return customInput.value || 'gemini-2.0-flash-exp';
+                }
+                return selectElement.value;
             }
             
             // --- WebSocket 连接 (仅用于工具服务器) ---
@@ -236,7 +426,7 @@
                 if (!validateInputs()) return;
                 setBusy(true);
                 try {
-                    await logStep("1. 开始分析任务依赖并制定执行计划...", "🧠");
+                    await logStep("1. 开始分析任务并拆分为切实可行的任务块...", "🧠");
                     const plan = await decomposeTask(state.mainTask);
                     if (!Array.isArray(plan) || plan.length === 0) {
                         await logStep("解析到的计划为空或不是数组，终止执行。", "❌");
@@ -246,182 +436,456 @@
                     displayPlan();
                     await logStep(`   计划制定完毕，共 ${plan.length} 个任务块。`, "✅");
                     
-                    for (let blockIndex = 0; blockIndex < state.plan.length; blockIndex++) {
-                        const block = state.plan[blockIndex];
-                        if (block.type === 'sequential') {
-                            await logStep(`\n开始执行顺序任务块 #${blockIndex + 1}`, "➡️");
-                            for (let taskIndex = 0; taskIndex < block.tasks.length; taskIndex++) {
-                                const task = block.tasks[taskIndex];
-                                await executeAndEvaluate(task, blockIndex, taskIndex);
-                            }
-                        } else if (block.type === 'parallel') {
-                            await logStep(`\n开始执行并行任务块 #${blockIndex + 1}`, "⚡");
-                            const promises = block.tasks.map((task, taskIndex) => 
-                                executeAndEvaluate(task, blockIndex, taskIndex)
-                            );
-                            await Promise.all(promises);
-                            await logStep(`并行任务块 #${blockIndex + 1} 全部完成`, "✔️");
-                        } else {
-                            if (Array.isArray(block.tasks)) {
-                                await logStep(`\n开始执行未声明类型的任务块 #${blockIndex + 1}（按顺序执行）`, "➡️");
-                                 for (let taskIndex = 0; taskIndex < block.tasks.length; taskIndex++) {
-                                    const task = block.tasks[taskIndex];
-                                    await executeAndEvaluate(task, blockIndex, taskIndex);
-                                }
-                            } else {
-                                await logStep(`未识别的任务块类型或结构: ${JSON.stringify(block).slice(0,500)}`, "⚠️");
-                            }
+                    // 依次执行每个任务块
+                    for (let taskIndex = 0; taskIndex < state.plan.length; taskIndex++) {
+                        const task = state.plan[taskIndex];
+                        const result = await executeTaskBlock(task, taskIndex);
+                        
+                        // 检查是否重新规划了
+                        if (result && result.replanned) {
+                            // 重置任务索引，重新开始执行
+                            taskIndex = -1;
+                            await logStep(`重新规划完成，从第一个任务开始执行`, "🔄");
+                            continue;
                         }
                     }
+                    
                     await finalizeTask();
                 } catch (error) {
                     await handleFatalError(error);
                 }
             }
             
-            async function executeAndEvaluate(subTask, blockIndex, taskIndex) {
-                const taskId = `${blockIndex}-${taskIndex}`;
+            async function executeTaskBlock(task, taskIndex) {
+                const taskId = `task-${taskIndex}`;
                 updateTaskStatus(taskId, 'running');
-                await logStep(`  [任务 ${taskId}] 开始执行: "${subTask}"`, "🚀");
+                await logStep(`\n开始执行任务块 #${taskIndex + 1}: "${task}"`, "🚀");
                 
-                const maxRetries = 3; 
+                // 创建执行过程显示区域
+                const executionDiv = createExecutionDisplay(taskIndex, task);
+                executionContainer.appendChild(executionDiv);
+                executionSection.classList.remove('hidden');
+                
+                const maxRetries = 3;
                 let lastOutput = '';
                 let lastFeedback = '';
+                
                 for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
                     if (retryCount > 0) {
-                        await logStep(`  [任务 ${taskId}] 第 ${retryCount} 次尝试修正...`, "🛠️");
+                        await logStep(`  [任务 ${taskIndex + 1}] 第 ${retryCount} 次尝试修正...`, "🛠️");
                     }
                     try {
-                        // 步骤 A: 决策
-                        let decision;
-                        const availableTools = "run_command, run_code, write_code, time, replan_remaining_steps";
-                        const toolDescriptions = `
-- run_command: 执行终端命令 (例如 'pip install pandas')。
-- run_code: 执行一段Python代码并返回输出。
-- write_code: 编写一段Python代码，它本身不执行。
-- time: 获取当前时间。
-- replan_remaining_steps: 当你认为主要目标已达成，但计划中还有多余步骤时调用。在 query 中说明重新规划的理由。
-`;
-
-                        if (retryCount === 0) {
-                            await logStep(`  [任务 ${taskId}] 正在决策执行动作...`, "🤔");
-                            const decisionPrompt = `你是一个决策AI。根据下面的任务描述和可用工具，判断需要执行什么动作。\n可用工具:\n${toolDescriptions}\n当前任务: "${subTask}"\n请严格按照以下 JSON 格式返回你的决策:\n{"tool": "tool_name", "query": "input_for_the_tool"}`;
-                            const decisionStr = await callGemini(decisionPrompt, true, settings.executionModel);
-                            decision = JSON.parse(decisionStr);
-                        } else {
-                            await logStep(`  [任务 ${taskId}] 根据反馈制定修正计划...`, "🧠");
-                            const revisionPrompt = `一个子任务执行失败了。\n原始子任务: "${subTask}"\n上次的产出(或错误): "${lastOutput}"\n失败的评估反馈: "${lastFeedback}"\n请根据以上信息，重新为这个原始子任务制定一个修正后的执行动作。\n可用工具:\n${toolDescriptions}\n请严格按照以下 JSON 格式返回你的决策:\n{"tool": "tool_name", "query": "input_for_the_tool_or_revised_answer"}`;
-                            const decisionStr = await callGemini(revisionPrompt, true, settings.executionModel);
-                            decision = JSON.parse(decisionStr);
+                        // 执行AI决策并执行
+                        const result = await executeAITask(task, taskIndex, retryCount, executionDiv);
+                        
+                        // 检查是否重新规划了
+                        if (result.replanned) {
+                            // 重新开始执行整个任务
+                            await logStep(`任务已重新规划，重新开始执行...`, "🔄");
+                            return { replanned: true, newPlan: result.newPlan };
                         }
                         
-                        // --- [核心修改] 步骤 B: 执行与解读 ---
-                        let finalOutputForEvaluation = ''; // 用于最终评估的内容
-
-                        if (decision.tool && decision.tool !== 'llm') {
-                            const userApproved = settings.autoApprove || await askForConfirmation(decision.tool, decision.query);
-                            if (!userApproved) {
-                                lastFeedback = "用户拒绝了提议的操作。";
-                                lastOutput = `被拒绝的操作: ${decision.tool} - ${decision.query}`;
-                                await logStep(`  [任务 ${taskId}] 用户拒绝了操作。`, "🙅");
-                                continue; 
-                            }
-                            await logStep(`  [任务 ${taskId}] 用户已批准。执行工具 [${decision.tool}]...`, "👍");
-                            
-                            if (decision.tool === 'replan_remaining_steps') {
-                                await logStep(`  [任务 ${taskId}] 决策: 重新规划剩余步骤... 理由: ${decision.query}`, "🔄");
-                                const replanContext = `原始总任务: "${state.mainTask}"\n---\n已完成的任务和产出摘要:\n${state.completedOutputs.map(item => `- 任务: ${item.task}\n  产出(前200字符): ${item.output.slice(0, 200)}...`).join('\n')}\n---\n重新规划的理由: ${decision.query}\n---\n请基于以上信息，为“原始总任务”生成一个全新的、更简洁的剩余任务计划。如果所有目标都已达成，请返回一个空数组 []。`;
-                                const newPlan = await decomposeTask(replanContext);
-                                await logStep(`  [任务 ${taskId}] 已生成新计划，将替换所有未开始的任务。`, "✨");
-                                state.plan[blockIndex].tasks.splice(taskIndex + 1);
-                                state.plan.splice(blockIndex + 1);
-                                state.plan.push(...newPlan);
-                                displayPlan();
-                                finalOutputForEvaluation = "成功重新规划了剩余步骤。";
-
-                            } else if (decision.tool === 'write_code') {
-                                const codeGenPrompt = `请只编写一段Python代码来实现以下功能，不要包含任何解释或markdown标记:\n\n${decision.query}`;
-                                finalOutputForEvaluation = await callGemini(codeGenPrompt, false, settings.executionModel);
-                                await logStep(`  [任务 ${taskId}] 代码已生成。`, "📝");
-                            
-                            } else {
-                                 // 对于 run_code, run_command 等返回信息的工具
-                                 const toolResult = await useTool(decision.tool, decision.query);
-                                 const toolOutput = toolResult.is_error ? `[工具执行失败]: ${toolResult.result}` : toolResult.result;
-                                 await logStep(`  [任务 ${taskId}] 工具返回:\n<pre class="whitespace-pre-wrap text-xs bg-gray-800 text-white p-2 rounded mt-1">${toolOutput}</pre>`, "📦");
-                                 
-                                 // **新增的解读步骤**
-                                 await logStep(`  [任务 ${taskId}] 已获取工具输出，正在解读并生成最终结论...`, "💡");
-                                 const postToolPrompt = `对于任务“${subTask}”，我刚刚调用了工具“${decision.tool}”，它返回了以下内容：\n\n--- 工具输出 ---\n${toolOutput}\n---\n\n现在，请基于这个工具输出，生成完成该任务所需的最终答案、代码或结论。只输出最终结果，不要解释。`;
-                                 finalOutputForEvaluation = await callGemini(postToolPrompt, false, settings.executionModel);
-                                 await logStep(`  [任务 ${taskId}] 已生成对工具输出的解读。`, "✅");
-                            }
-                        } else {
-                            // 如果AI决策不使用工具，则直接生成文本
-                            const query = decision.query || subTask;
-                            await logStep(`  [任务 ${taskId}] 决策: 无需工具，由LLM生成...`, "✍️");
-                            const context = `原始用户需求: "${state.mainTask}"\n\n--- 已完成的历史记录 ---\n` + 
-                                            state.completedOutputs.map(item => `[任务: ${item.task}]\n[产出: ${item.output}]`).join('\n\n');
-                            const executionPrompt = `基于以下全局信息，请完成当前具体任务。\n\n${context}\n\n--- 当前具体任务 ---\n"${query}"`;
-                            finalOutputForEvaluation = await callGemini(executionPrompt, false, settings.executionModel);
-                        }
+                        lastOutput = result.output;
                         
-                        lastOutput = finalOutputForEvaluation;
-
-                        // 步骤 C: 评估最终产出
-                        await logStep(`  [任务 ${taskId}] 内容已生成，开始评估最终产出...`, "🧐");
-                        const evaluationPrompt = `你是一个严格的质量评估AI。请评估以下产出是否高质量地完成了指定任务。你需要返回一个 JSON 对象，包含 "completed" (布尔值) 和 "feedback" (字符串) 两个字段。\n指定的任务: "${subTask}"\n产出内容:\n---\n${finalOutputForEvaluation}\n---`;
-                        const evaluationResultStr = await callGemini(evaluationPrompt, true, settings.evaluationModel);
-                        const evaluationResult = JSON.parse(evaluationResultStr);
-
-                        if (evaluationResult.completed) {
-                            await logStep(`  [任务 ${taskId}] 评估结果: 合格。`, "✅");
-                            state.completedOutputs.push({ task: subTask, output: finalOutputForEvaluation });
+                        // 审阅AI评估结果
+                        await logStep(`  [任务 ${taskIndex + 1}] 交给审阅AI评估...`, "🧐");
+                        const reviewResult = await reviewTaskResult(task, result.output);
+                        
+                        if (reviewResult.passed) {
+                            await logStep(`  [任务 ${taskIndex + 1}] 审阅通过！`, "✅");
+                            state.completedOutputs.push({ task, output: result.output });
                             updateTaskStatus(taskId, 'completed');
-                            return; 
+                            updateExecutionDisplay(executionDiv, 'completed', result.output);
+                            return;
                         } else {
-                            lastFeedback = evaluationResult.feedback;
-                            await logStep(`  [任务 ${taskId}] 评估结果: 不合格。反馈: ${lastFeedback}`, "👎");
+                            lastFeedback = reviewResult.feedback;
+                            await logStep(`  [任务 ${taskIndex + 1}] 审阅不通过。反馈: ${lastFeedback}`, "👎");
+                            updateExecutionDisplay(executionDiv, 'failed', result.output, lastFeedback);
+                            
+                            if (retryCount >= maxRetries) {
+                                throw new Error(`任务 "${task}" 在 ${maxRetries} 次重试后仍然未通过审阅。`);
+                            }
                         }
                     } catch (error) {
-                        console.error(`任务 ${taskId} 执行错误:`, error);
+                        console.error(`任务 ${taskIndex + 1} 执行错误:`, error);
                         const errorMessage = error.message || '未知错误';
-                        await logStep(`  [任务 ${taskId}] 执行错误: ${errorMessage}`, "❌");
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行错误: ${errorMessage}`, "❌");
                         lastFeedback = `执行过程中发生异常: ${errorMessage}`;
                         lastOutput = `[异常] ${errorMessage}`;
+                        
                         if (retryCount >= maxRetries) {
                             updateTaskStatus(taskId, 'failed');
+                            updateExecutionDisplay(executionDiv, 'failed', lastOutput, lastFeedback);
                             throw error;
                         }
                     }
                 }
+                
                 updateTaskStatus(taskId, 'failed');
-                throw new Error(`任务 "${subTask}" 在 ${maxRetries} 次重试后仍然失败。`);
+                updateExecutionDisplay(executionDiv, 'failed', lastOutput, lastFeedback);
+                throw new Error(`任务 "${task}" 在 ${maxRetries} 次重试后仍然失败。`);
+            }
+            
+            async function executeAITask(task, taskIndex, retryCount, executionDiv) {
+                await logStep(`  [任务 ${taskIndex + 1}] 执行AI开始处理...`, "🤖");
+                
+                let currentCode = '';
+                let toolChain = [];
+                let isCompleted = false;
+                let result = '';
+                
+                while (!isCompleted) {
+                    // 执行AI决策
+                    const decision = await makeExecutionDecision(task, currentCode, toolChain, retryCount);
+                    toolChain.push(decision);
+                    
+                    // 显示工具链步骤
+                    addToolChainStep(executionDiv, decision);
+                    
+                    if (decision.action === 'think') {
+                        // 直接思考输出
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI直接思考输出...`, "💭");
+                        result = decision.output;
+                        isCompleted = true;
+                    } else if (decision.action === 'replan') {
+                        // 重新规划任务
+                        await logStep(`  [任务 ${taskIndex + 1}] AI决定重新规划任务...`, "🔄");
+                        
+                        if (decision.newPlan && Array.isArray(decision.newPlan)) {
+                            // 更新任务计划
+                            state.plan = decision.newPlan;
+                            displayPlan();
+                            
+                            // 重新开始执行
+                            await logStep(`任务已重新规划，共 ${decision.newPlan.length} 个任务块`, "✅");
+                            
+                            // 返回特殊标记，表示需要重新开始
+                            return { 
+                                output: '任务已重新规划', 
+                                toolChain,
+                                replanned: true,
+                                newPlan: decision.newPlan
+                            };
+                        } else {
+                            await logStep(`重新规划失败：未提供有效的新计划`, "❌");
+                        }
+                    } else if (decision.action === 'write_code') {
+                        // 编写代码
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI编写代码...`, "📝");
+                        currentCode = decision.code;
+                    } else if (decision.action === 'debug_code') {
+                        // 调试代码
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI调试代码...`, "🐛");
+                        currentCode = decision.code;
+                    } else if (decision.action === 'run_code') {
+                        // 运行代码
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI运行代码...`, "▶️");
+                        const runResult = await runPythonCode(currentCode);
+                        decision.runResult = runResult;
+                        
+                        // 更新工具链显示
+                        updateToolChainStep(executionDiv, toolChain.length - 1, decision);
+                        
+                        if (runResult.error) {
+                            await logStep(`  [任务 ${taskIndex + 1}] 代码运行出错: ${runResult.error}`, "❌");
+                        } else {
+                            await logStep(`  [任务 ${taskIndex + 1}] 代码运行成功`, "✅");
+                        }
+                    } else if (decision.action === 'run_command') {
+                        // 运行命令行
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI运行命令行...`, "💻");
+                        const runResult = await runCommand(decision.command);
+                        decision.runResult = runResult;
+                        
+                        // 更新工具链显示
+                        updateToolChainStep(executionDiv, toolChain.length - 1, decision);
+                        
+                        if (runResult.error) {
+                            await logStep(`  [任务 ${taskIndex + 1}] 命令行执行出错: ${runResult.error}`, "❌");
+                        } else {
+                            await logStep(`  [任务 ${taskIndex + 1}] 命令行执行成功`, "✅");
+                        }
+                    } else if (decision.action === 'save_code') {
+                        // 保存代码 - 通过后端API
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI保存代码...`, "💾");
+                        const saveResult = await saveCodeToBackend(decision.name || `代码块_${Date.now()}`, currentCode);
+                        decision.saveResult = saveResult;
+                        
+                        // 更新工具链显示
+                        updateToolChainStep(executionDiv, toolChain.length - 1, decision);
+                        
+                        if (saveResult.success) {
+                            await logStep(`  [任务 ${taskIndex + 1}] 代码保存成功，ID: ${saveResult.codeId}`, "✅");
+                            // 刷新保存的代码列表
+                            await loadSavedCodes();
+                        } else {
+                            await logStep(`  [任务 ${taskIndex + 1}] 代码保存失败: ${saveResult.error}`, "❌");
+                        }
+                    } else if (decision.action === 'run_saved_code') {
+                        // 运行已保存的代码 - 通过后端API
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI运行已保存的代码...`, "📂");
+                        const runResult = await runSavedCodeFromBackend(decision.codeId);
+                        decision.runResult = runResult;
+                        
+                        // 更新工具链显示
+                        updateToolChainStep(executionDiv, toolChain.length - 1, decision);
+                        
+                        if (runResult.success) {
+                            if (runResult.error) {
+                                await logStep(`  [任务 ${taskIndex + 1}] 代码运行出错: ${runResult.error}`, "❌");
+                            } else {
+                                await logStep(`  [任务 ${taskIndex + 1}] 代码运行成功`, "✅");
+                            }
+                        } else {
+                            await logStep(`  [任务 ${taskIndex + 1}] 无法运行代码: ${runResult.error}`, "❌");
+                        }
+                    } else if (decision.action === 'complete') {
+                        // 完成任务
+                        await logStep(`  [任务 ${taskIndex + 1}] 执行AI认为任务已完成`, "🏁");
+                        result = decision.output || currentCode;
+                        isCompleted = true;
+                    }
+                }
+                
+                return { output: result, toolChain };
+            }
+            
+            async function makeExecutionDecision(task, currentCode, toolChain, retryCount) {
+                // 首先获取已保存的代码列表，以便AI决策
+                const savedCodesList = await getSavedCodesList();
+                
+                const toolDescriptions = `
+- think: 直接思考并输出结果，不使用任何工具
+- write_code: 编写新的Python代码
+- debug_code: 调试现有Python代码
+- run_code: 运行当前Python代码
+- run_command: 运行命令行指令（如ls, dir, pip install等）
+- save_code: 保存当前代码到后端
+- run_saved_code: 运行已保存的代码
+- replan: 重新规划整个任务（当发现当前计划不合适时）
+- complete: 认为任务已完成，输出最终结果
+`;
+                
+                const context = {
+                    task,
+                    currentCode: currentCode || '无',
+                    toolChain: toolChain.map(step => ({
+                        action: step.action,
+                        input: step.input || '',
+                        output: step.output || '',
+                        runResult: step.runResult || null,
+                        saveResult: step.saveResult || null
+                    })),
+                    retryCount,
+                    savedCodes: savedCodesList
+                };
+                
+                const prompt = `你是一个执行AI，负责完成具体的任务块。
+
+当前任务: "${task}"
+
+当前代码:
+ ${currentCode || '无'}
+
+已执行的工具链:
+ ${JSON.stringify(context.toolChain, null, 2)}
+
+已保存的代码列表:
+ ${JSON.stringify(context.savedCodes, null, 2)}
+
+请根据当前状态，决定下一步行动。可用工具:
+ ${toolDescriptions}
+
+重要提示：
+1. 如果发现当前任务无法完成，或者需要重新规划整个任务，请使用 replan 工具
+2. 重新规划时，请给出"简略但不简陋"的计划 - 即简洁但包含所有必要步骤
+3. 只有在确实需要重新规划时才使用 replan 工具，不要滥用
+4. 你可以使用 run_command 工具执行系统命令，如文件操作、安装包等
+5. 使用 run_command 时要确保命令安全，避免破坏性操作
+
+请严格按照以下JSON格式返回你的决策:
+{
+  "action": "工具名称",
+  "input": "工具输入（如果需要）",
+  "output": "输出内容（如果action是think或complete）",
+  "code": "代码内容（如果action是write_code或debug_code）",
+  "command": "命令行指令（如果action是run_command）",
+  "name": "代码名称（如果action是save_code）",
+  "codeId": "代码ID（如果action是run_saved_code）",
+  "newPlan": ["新任务1", "新任务2", "新任务3"], // 如果action是replan
+  "reasoning": "决策理由"
+}`;
+                
+                const modelName = getModelName(executionModel, customExecutionModel);
+                const decisionStr = await callGemini(prompt, true, modelName);
+                return JSON.parse(decisionStr);
+            }
+            
+            async function reviewTaskResult(task, output) {
+                const prompt = `你是一个严格的审阅AI，负责评估任务执行结果。
+
+原始任务: "${task}"
+
+执行结果:
+ ${output}
+
+请评估执行结果是否高质量地完成了任务。返回JSON格式:
+{
+  "passed": true/false,
+  "feedback": "详细反馈意见",
+  "score": 0-100
+}`;
+                
+                const modelName = getModelName(reviewModel, customReviewModel);
+                const reviewStr = await callGemini(prompt, true, modelName);
+                return JSON.parse(reviewStr);
             }
             
             async function finalizeTask() {
                 await logStep("\n所有任务块执行完毕，正在整合最终成果...", "🎉");
-                const finalResult = state.completedOutputs.map(item => `<h2>${item.task}</h2>\n\n<pre class="whitespace-pre-wrap text-sm bg-gray-100 p-4 rounded-md">${item.output.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`).join('\n\n---\n\n');
+                const finalResult = state.completedOutputs.map(item => `<h3>${item.task}</h3>\n\n<pre class="whitespace-pre-wrap text-sm bg-gray-100 p-4 rounded-md">${item.output.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`).join('\n\n---\n\n');
                 finalResultContainer.innerHTML = finalResult;
                 finalResultSection.classList.remove('hidden');
                 await logStep("任务全部完成！", "🏆");
                 setBusy(false);
             }
 
+            // --- 后端API调用 ---
+            async function saveCodeToBackend(name, code) {
+                try {
+                    const response = await fetch('http://127.0.0.1:8000/api/save_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ name, code })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`保存代码失败: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    return { success: true, codeId: result.code_id, message: result.message };
+                } catch (error) {
+                    console.error('保存代码错误:', error);
+                    return { success: false, error: error.message };
+                }
+            }
+            
+            async function getSavedCodesList() {
+                try {
+                    const response = await fetch('http://127.0.0.1:8000/api/saved_codes');
+                    
+                    if (!response.ok) {
+                        throw new Error(`获取代码列表失败: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    return result.codes || [];
+                } catch (error) {
+                    console.error('获取代码列表错误:', error);
+                    return [];
+                }
+            }
+            
+            async function runSavedCodeFromBackend(codeId) {
+                try {
+                    const response = await fetch('http://127.0.0.1:8000/api/run_saved_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ code_id: codeId })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`运行保存的代码失败: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    return { 
+                        success: true, 
+                        output: result.output, 
+                        error: result.error,
+                        return_code: result.return_code,
+                        execution_time: result.execution_time
+                    };
+                } catch (error) {
+                    console.error('运行保存的代码错误:', error);
+                    return { success: false, error: error.message };
+                }
+            }
+            
+            async function loadSavedCodes() {
+                savedCodes = await getSavedCodesList();
+                updateSavedCodesDisplay();
+            }
+            
             // --- 工具和API调用 ---
-            function useTool(tool, query) {
+            async function runPythonCode(code) {
                 return new Promise((resolve) => {
                     const request_id = Date.now() + Math.random().toString();
                     toolResponses.set(request_id, resolve);
-                    socket.emit('use_tool', { tool, query, request_id });
+                    socket.emit('use_tool', { tool: 'run_code', query: code, request_id });
+                });
+            }
+            
+            async function runCommand(command) {
+                return new Promise((resolve) => {
+                    const request_id = Date.now() + Math.random().toString();
+                    toolResponses.set(request_id, resolve);
+                    socket.emit('use_tool', { tool: 'run_command', query: command, request_id });
                 });
             }
 
             async function decomposeTask(task) {
-                const prompt = `你是一个顶级的项目规划AI。请把下面的“任务或情境”分解为一个JSON数组，每个元素是一个任务块。任务块包含 "type" ('sequential' 或 'parallel') 和 "tasks" (一个字符串任务列表)。
-情境: ${task}
-请只返回纯 JSON（不要额外解释或代码块）。例如: [{"type":"sequential","tasks":["步骤1","步骤2"]}]`;
-                const raw = await callGemini(prompt, true, settings.planningModel);
+                const prompt = `你是一个任务规划AI，负责将用户任务拆分为切实可行的任务块。
+
+用户任务: "${task}"
+
+执行AI拥有以下强大能力：
+1. 可以编写并运行Python代码（包括数学计算、数据处理、文件操作等）
+2. 可以执行系统命令（如ls、dir、pip install、git等）
+3. 可以保存和重用代码
+4. 可以直接思考并给出答案
+
+请将任务拆分为一系列高层次的、具体的任务块。每个任务块应该是一个明确的步骤，但不要过于细化执行细节。
+
+重要原则：
+1. 任务块要高层次的、具体的，避免描述执行细节
+2. 充分利用执行AI的能力，将复杂的计算或操作合并为一个任务块
+3. 保持"简略但不简陋" - 即简洁但包含所有必要步骤
+4. 避免将可以一步完成的操作拆分成多个步骤
+
+错误的例子（过于细化）：
+对于"12345213432321是不是素数"，不应该拆分为：
+1. 获取待检测的数字
+2. 进行基本排除
+3. 计算平方根
+4. 试除法检查
+5. 判断结果
+
+正确的例子（简洁高效）：
+对于"12345213432321是不是素数"，应该拆分为：
+1. 编写代码检测该数字是否为素数
+
+请只返回JSON数组，格式如下:
+[
+  "任务块1",
+  "任务块2",
+  "任务块3"
+]
+
+例如，对于"分析一个CSV文件中的销售数据并生成可视化报告"，应该返回:
+[
+  "查找并加载CSV文件",
+  "使用Python分析数据并生成可视化图表",
+  "创建分析报告"
+]`;
+                
+                const modelName = getModelName(planningModel, customPlanningModel);
+                const raw = await callGemini(prompt, true, modelName);
                 await logStep(`模型规划返回: ${String(raw).slice(0,1000)}`, "📄");
 
                 function safeParseModelJson(text) {
@@ -437,7 +901,7 @@
                 return safeParseModelJson(raw);
             }
 
-            async function callGemini(prompt, useJson = false, model = 'gemini-2.5-flash') {
+            async function callGemini(prompt, useJson = false, model = 'gemini-2.0-flash-exp') {
                 const maxRetries = 3;
                 let lastError = null;
                 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${state.apiKey}`;
@@ -494,17 +958,410 @@
                 throw lastError || new Error('Gemini API 调用在多次重试后仍然失败');
             }
             
-            // --- UI 和状态管理辅助函数 ---
-            function askForConfirmation(tool, query) { return new Promise(resolve => { modalTool.textContent = tool; modalQuery.textContent = query; confirmationModal.classList.remove('hidden'); modalResolver = resolve; }); }
-            approveBtn.addEventListener('click', () => { if (modalResolver) { confirmationModal.classList.add('hidden'); modalResolver(true); modalResolver = null; } });
-            rejectBtn.addEventListener('click', () => { if (modalResolver) { confirmationModal.classList.add('hidden'); modalResolver(false); modalResolver = null; } });
-            function initializeState() { state = { apiKey: apiKeyInput.value.trim(), mainTask: mainTaskInput.value.trim(), plan: [], completedOutputs: [], isBusy: false, }; planSection.classList.add('hidden'); logSection.classList.add('hidden'); finalResultSection.classList.add('hidden'); planContainer.innerHTML = ''; logContainer.innerHTML = ''; finalResultContainer.innerHTML = ''; }
-            function validateInputs() { if (!socket.connected) { alert("未连接到后端工具服务器。"); return false; } if (!state.apiKey) { alert("请输入API Key。"); return false; } if (!state.mainTask) { alert("请输入任务。"); return false; } return true; }
-            function setBusy(isBusy) { state.isBusy = isBusy; startButton.disabled = isBusy; apiKeyInput.disabled = isBusy; mainTaskInput.disabled = isBusy; buttonLoader.classList.toggle('hidden', !isBusy); buttonText.textContent = isBusy ? '正在运行...' : '开始任务'; }
-            function displayPlan() { planContainer.innerHTML = ''; state.plan.forEach((block, blockIndex) => { const blockDiv = document.createElement('div'); blockDiv.className = 'task-block'; const blockTitle = document.createElement('h3'); blockTitle.className = 'font-semibold mb-2 text-gray-700'; blockTitle.textContent = `任务块 #${blockIndex + 1} (${block.type === 'parallel' ? '并行' : '顺序'})`; blockDiv.appendChild(blockTitle); const ul = document.createElement('ul'); ul.className = 'space-y-2'; const tasks = Array.isArray(block.tasks) ? block.tasks : []; tasks.forEach((task, taskIndex) => { const li = document.createElement('li'); li.id = `task-item-${blockIndex}-${taskIndex}`; li.className = 'task-list-item p-3 bg-white border-l-4 rounded-r-md shadow-sm status-pending'; if (typeof task === 'object' && task !== null) { li.textContent = task.description || task.task || JSON.stringify(task); } else { li.textContent = task; } ul.appendChild(li); }); blockDiv.appendChild(ul); planContainer.appendChild(blockDiv); }); planSection.classList.remove('hidden'); }
-            function updateTaskStatus(taskId, status) { const taskItem = document.getElementById(`task-item-${taskId}`); if (taskItem) { taskItem.classList.remove('status-pending', 'status-running', 'status-completed', 'status-failed'); taskItem.classList.add(`status-${status}`); } }
-            async function logStep(message, emoji = "➡️") { return new Promise(resolve => { if (!logSection.classList.contains('hidden')) { logContainer.scrollTop = logContainer.scrollHeight; } else { logSection.classList.remove('hidden'); } const entry = document.createElement('div'); entry.className = 'log-entry opacity-0'; entry.innerHTML = `<span class="mr-2">${emoji}</span><span>${message.replace(/</g, "<").replace(/>/g, ">")}</span>`; logContainer.appendChild(entry); setTimeout(() => { entry.classList.remove('opacity-0'); logContainer.scrollTop = logContainer.scrollHeight; setTimeout(resolve, 50); }, 50); }); }
-            async function handleFatalError(error, taskIndex = -1) { console.error("Agent 运行出错:", error); await logStep(`发生严重错误，任务中止: ${error.message}`, "❌"); setBusy(false); }
+            // --- UI 辅助函数 ---
+            function createExecutionDisplay(taskIndex, task) {
+                const div = document.createElement('div');
+                div.className = 'mb-6 p-4 bg-white rounded-lg shadow';
+                div.id = `execution-${taskIndex}`;
+                
+                div.innerHTML = `
+                    <h3 class="text-lg font-semibold mb-3">任务块 #${taskIndex + 1}: ${task}</h3>
+                    <div class="tool-chain" id="tool-chain-${taskIndex}">
+                        <div class="text-gray-500 text-sm">等待执行...</div>
+                    </div>
+                    <div class="mt-4">
+                        <div class="text-sm font-medium text-gray-700 mb-2">最终结果:</div>
+                        <div id="result-${taskIndex}" class="text-gray-500 text-sm">等待完成...</div>
+                    </div>
+                `;
+                
+                return div;
+            }
+            
+            function addToolChainStep(executionDiv, decision) {
+                const taskIndex = executionDiv.id.split('-')[1];
+                const toolChainDiv = document.getElementById(`tool-chain-${taskIndex}`);
+                
+                // 清除初始提示
+                if (toolChainDiv.querySelector('.text-gray-500')) {
+                    toolChainDiv.innerHTML = '';
+                }
+                
+                const stepDiv = document.createElement('div');
+                stepDiv.className = 'tool-step';
+                stepDiv.id = `step-${taskIndex}-${Date.now()}`;
+                
+                let iconClass = '';
+                let iconText = '';
+                
+                switch (decision.action) {
+                    case 'think':
+                        iconClass = 'think';
+                        iconText = '💭';
+                        break;
+                    case 'write_code':
+                        iconClass = 'write';
+                        iconText = '📝';
+                        break;
+                    case 'debug_code':
+                        iconClass = 'debug';
+                        iconText = '🐛';
+                        break;
+                    case 'run_code':
+                        iconClass = 'run';
+                        iconText = '▶️';
+                        break;
+                    case 'run_command':
+                        iconClass = 'command';
+                        iconText = '💻';
+                        break;
+                    case 'save_code':
+                        iconClass = 'save';
+                        iconText = '💾';
+                        break;
+                    case 'run_saved_code':
+                        iconClass = 'run';
+                        iconText = '📂';
+                        break;
+                    case 'replan':
+                        iconClass = 'think';
+                        iconText = '🔄';
+                        break;
+                    case 'complete':
+                        iconClass = 'think';
+                        iconText = '🏁';
+                        break;
+                    default:
+                        iconClass = 'think';
+                        iconText = '❓';
+                }
+                
+                let content = '';
+                
+                if (decision.action === 'think' || decision.action === 'complete') {
+                    content = `
+                        <div class="tool-name">${decision.action === 'think' ? '思考' : '完成'}</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">输出:</div>
+                            <div class="text-sm mt-1 p-2 bg-gray-100 rounded">${decision.output || ''}</div>
+                        </div>
+                    `;
+                } else if (decision.action === 'replan') {
+                    content = `
+                        <div class="tool-name">重新规划</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">新计划:</div>
+                            <div class="text-sm mt-1 p-2 bg-gray-100 rounded">
+                                <ol class="list-decimal list-inside">
+                                    ${(decision.newPlan || []).map(item => `<li>${item}</li>`).join('')}
+                                </ol>
+                            </div>
+                        </div>
+                    `;
+                } else if (decision.action === 'write_code' || decision.action === 'debug_code') {
+                    content = `
+                        <div class="tool-name">${decision.action === 'write_code' ? '编写代码' : '调试代码'}</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">代码:</div>
+                            <div class="code-editor mt-1">${decision.code || ''}</div>
+                        </div>
+                    `;
+                } else if (decision.action === 'run_code') {
+                    content = `
+                        <div class="tool-name">运行代码</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">运行结果:</div>
+                            <div class="text-sm mt-1 text-gray-500">等待运行结果...</div>
+                        </div>
+                    `;
+                } else if (decision.action === 'run_command') {
+                    content = `
+                        <div class="tool-name">运行命令</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">命令:</div>
+                            <div class="code-editor mt-1">${decision.command || ''}</div>
+                            <div class="text-sm mt-1 text-gray-500">等待执行结果...</div>
+                        </div>
+                    `;
+                } else if (decision.action === 'save_code') {
+                    content = `
+                        <div class="tool-name">保存代码</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">保存为: ${decision.name || '未命名'}</div>
+                            <div class="text-sm mt-1 text-gray-500">等待保存结果...</div>
+                        </div>
+                    `;
+                } else if (decision.action === 'run_saved_code') {
+                    content = `
+                        <div class="tool-name">运行已保存代码</div>
+                        <div class="text-sm text-gray-600">${decision.reasoning || ''}</div>
+                        <div class="mt-2">
+                            <div class="text-sm font-medium text-gray-700">代码ID: ${decision.codeId || ''}</div>
+                            <div class="text-sm mt-1 text-gray-500">等待运行结果...</div>
+                        </div>
+                    `;
+                }
+                
+                stepDiv.innerHTML = `
+                    <div class="tool-icon ${iconClass}">${iconText}</div>
+                    <div class="tool-content">${content}</div>
+                `;
+                
+                toolChainDiv.appendChild(stepDiv);
+            }
+            
+            function updateToolChainStep(executionDiv, stepIndex, decision) {
+                const taskIndex = executionDiv.id.split('-')[1];
+                const toolChainDiv = document.getElementById(`tool-chain-${taskIndex}`);
+                const steps = toolChainDiv.querySelectorAll('.tool-step');
+                const stepDiv = steps[stepIndex];
+                
+                if (!stepDiv) return;
+                
+                if (decision.action === 'run_code') {
+                    const resultDiv = stepDiv.querySelector('.tool-content .text-gray-500');
+                    if (resultDiv && decision.runResult) {
+                        if (decision.runResult.error) {
+                            resultDiv.innerHTML = `
+                                <div class="text-red-600 font-medium">运行出错:</div>
+                                <div class="code-output mt-1">${decision.runResult.error}</div>
+                            `;
+                        } else {
+                            resultDiv.innerHTML = `
+                                <div class="text-green-600 font-medium">运行成功:</div>
+                                <div class="code-output mt-1">${decision.runResult.result || ''}</div>
+                            `;
+                        }
+                    }
+                } else if (decision.action === 'run_command') {
+                    const resultDiv = stepDiv.querySelector('.tool-content .text-gray-500');
+                    if (resultDiv && decision.runResult) {
+                        if (decision.runResult.error) {
+                            resultDiv.innerHTML = `
+                                <div class="text-red-600 font-medium">执行出错:</div>
+                                <div class="code-output mt-1">${decision.runResult.error}</div>
+                            `;
+                        } else {
+                            resultDiv.innerHTML = `
+                                <div class="text-green-600 font-medium">执行成功:</div>
+                                <div class="code-output mt-1">${decision.runResult.result || ''}</div>
+                            `;
+                        }
+                    }
+                } else if (decision.action === 'save_code') {
+                    const resultDiv = stepDiv.querySelector('.tool-content .text-gray-500');
+                    if (resultDiv && decision.saveResult) {
+                        if (decision.saveResult.success) {
+                            resultDiv.innerHTML = `
+                                <div class="text-green-600 font-medium">保存成功:</div>
+                                <div class="text-sm mt-1">代码ID: ${decision.saveResult.codeId}</div>
+                            `;
+                        } else {
+                            resultDiv.innerHTML = `
+                                <div class="text-red-600 font-medium">保存失败:</div>
+                                <div class="text-sm mt-1">${decision.saveResult.error}</div>
+                            `;
+                        }
+                    }
+                } else if (decision.action === 'run_saved_code') {
+                    const resultDiv = stepDiv.querySelector('.tool-content .text-gray-500');
+                    if (resultDiv && decision.runResult) {
+                        if (decision.runResult.success) {
+                            if (decision.runResult.error) {
+                                resultDiv.innerHTML = `
+                                    <div class="text-red-600 font-medium">运行出错:</div>
+                                    <div class="code-output mt-1">${decision.runResult.error}</div>
+                                `;
+                            } else {
+                                resultDiv.innerHTML = `
+                                    <div class="text-green-600 font-medium">运行成功:</div>
+                                    <div class="code-output mt-1">${decision.runResult.output || ''}</div>
+                                `;
+                            }
+                        } else {
+                            resultDiv.innerHTML = `
+                                <div class="text-red-600 font-medium">运行失败:</div>
+                                <div class="text-sm mt-1">${decision.runResult.error}</div>
+                            `;
+                        }
+                    }
+                }
+            }
+            
+            function updateExecutionDisplay(executionDiv, status, output, feedback = '') {
+                const taskIndex = executionDiv.id.split('-')[1];
+                const resultDiv = document.getElementById(`result-${taskIndex}`);
+                
+                if (status === 'completed') {
+                    resultDiv.innerHTML = `
+                        <div class="text-green-600 font-medium mb-2">✅ 任务完成</div>
+                        <div class="text-sm">${output || ''}</div>
+                    `;
+                } else if (status === 'failed') {
+                    resultDiv.innerHTML = `
+                        <div class="text-red-600 font-medium mb-2">❌ 任务失败</div>
+                        <div class="text-sm mb-2">${output || ''}</div>
+                        <div class="text-sm text-orange-600">反馈: ${feedback || ''}</div>
+                    `;
+                }
+            }
+            
+            function updateSavedCodesDisplay() {
+                savedCodesContainer.innerHTML = '';
+                
+                if (!savedCodes || savedCodes.length === 0) {
+                    savedCodesContainer.innerHTML = '<div class="text-gray-500 text-sm">暂无保存的代码</div>';
+                    return;
+                }
+                
+                for (const codeInfo of savedCodes) {
+                    const codeDiv = document.createElement('div');
+                    codeDiv.className = 'saved-code-item';
+                    codeDiv.dataset.codeId = codeInfo.id;
+                    
+                    codeDiv.innerHTML = `
+                        <div class="font-medium">${codeInfo.name}</div>
+                        <div class="text-xs text-gray-500">${new Date(codeInfo.created_at).toLocaleString()}</div>
+                        <div class="text-xs text-gray-600 mt-1">代码长度: ${codeInfo.code.length} 字符</div>
+                    `;
+                    
+                    codeDiv.addEventListener('click', () => {
+                        // 选中代码
+                        document.querySelectorAll('.saved-code-item').forEach(item => {
+                            item.classList.remove('selected');
+                        });
+                        codeDiv.classList.add('selected');
+                        selectedCodeId = codeInfo.id;
+                    });
+                    
+                    savedCodesContainer.appendChild(codeDiv);
+                }
+                
+                savedCodesSection.classList.remove('hidden');
+            }
+            
+            function askForConfirmation(tool, query) { 
+                return new Promise(resolve => { 
+                    modalTool.textContent = tool; 
+                    modalQuery.textContent = query; 
+                    confirmationModal.classList.remove('hidden'); 
+                    modalResolver = resolve; 
+                }); 
+            }
+            
+            approveBtn.addEventListener('click', () => { 
+                if (modalResolver) { 
+                    confirmationModal.classList.add('hidden'); 
+                    modalResolver(true); 
+                    modalResolver = null; 
+                } 
+            });
+            
+            rejectBtn.addEventListener('click', () => { 
+                if (modalResolver) { 
+                    confirmationModal.classList.add('hidden'); 
+                    modalResolver(false); 
+                    modalResolver = null; 
+                } 
+            });
+            
+            function initializeState() { 
+                state = { 
+                    apiKey: apiKeyInput.value.trim(), 
+                    mainTask: mainTaskInput.value.trim(), 
+                    plan: [], 
+                    completedOutputs: [], 
+                    isBusy: false, 
+                }; 
+                planSection.classList.add('hidden'); 
+                executionSection.classList.add('hidden'); 
+                logSection.classList.add('hidden'); 
+                savedCodesSection.classList.add('hidden');
+                finalResultSection.classList.add('hidden'); 
+                planContainer.innerHTML = ''; 
+                executionContainer.innerHTML = '';
+                logContainer.innerHTML = ''; 
+                savedCodesContainer.innerHTML = '';
+                finalResultContainer.innerHTML = ''; 
+                savedCodes = {};
+                selectedCodeId = null;
+            }
+            
+            function validateInputs() { 
+                if (!socket.connected) { 
+                    alert("未连接到后端工具服务器。"); 
+                    return false; 
+                } 
+                if (!state.apiKey) { 
+                    alert("请输入API Key。"); 
+                    return false; 
+                } 
+                if (!state.mainTask) { 
+                    alert("请输入任务。"); 
+                    return false; 
+                } 
+                return true; 
+            }
+            
+            function setBusy(isBusy) { 
+                state.isBusy = isBusy; 
+                startButton.disabled = isBusy; 
+                apiKeyInput.disabled = isBusy; 
+                mainTaskInput.disabled = isBusy; 
+                buttonLoader.classList.toggle('hidden', !isBusy); 
+                buttonText.textContent = isBusy ? '正在运行...' : '开始任务'; 
+            }
+            
+            function displayPlan() { 
+                planContainer.innerHTML = ''; 
+                state.plan.forEach((task, index) => { 
+                    const taskDiv = document.createElement('div'); 
+                    taskDiv.className = 'task-list-item p-3 bg-white border-l-4 rounded-r-md shadow-sm status-pending mb-2'; 
+                    taskDiv.id = `task-item-${index}`; 
+                    taskDiv.textContent = `${index + 1}. ${task}`; 
+                    planContainer.appendChild(taskDiv); 
+                }); 
+                planSection.classList.remove('hidden'); 
+            }
+            
+            function updateTaskStatus(taskId, status) { 
+                const taskItem = document.getElementById(`task-item-${taskId}`); 
+                if (taskItem) { 
+                    taskItem.classList.remove('status-pending', 'status-running', 'status-completed', 'status-failed'); 
+                    taskItem.classList.add(`status-${status}`); 
+                } 
+            }
+            
+            async function logStep(message, emoji = "➡️") { 
+                return new Promise(resolve => { 
+                    if (!logSection.classList.contains('hidden')) { 
+                        logContainer.scrollTop = logContainer.scrollHeight; 
+                    } else { 
+                        logSection.classList.remove('hidden'); 
+                    } 
+                    const entry = document.createElement('div'); 
+                    entry.className = 'log-entry opacity-0'; 
+                    entry.innerHTML = `<span class="mr-2">${emoji}</span><span>${message.replace(/</g, "<").replace(/>/g, ">")}</span>`; 
+                    logContainer.appendChild(entry); 
+                    setTimeout(() => { 
+                        entry.classList.remove('opacity-0'); 
+                        logContainer.scrollTop = logContainer.scrollHeight; 
+                        setTimeout(resolve, 50); 
+                    }, 50); 
+                }); 
+            }
+            
+            async function handleFatalError(error) { 
+                console.error("Agent 运行出错:", error); 
+                await logStep(`发生严重错误，任务中止: ${error.message}`, "❌"); 
+                setBusy(false); 
+            }
 
             // --- DOM 事件监听 ---
             startButton.addEventListener('click', runAgent);
@@ -513,7 +1370,35 @@
             closeSettingsBtn.addEventListener('click', () => { settingsModal.classList.add('hidden'); });
             saveSettingsBtn.addEventListener('click', () => { saveSettings(); settingsModal.classList.add('hidden'); });
             settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) { settingsModal.classList.add('hidden'); } });
+            refreshSavedCodesBtn.addEventListener('click', loadSavedCodes);
             
+            // 处理模型选择变化
+            planningModel.addEventListener('change', (e) => {
+                if (e.target.value === 'custom') {
+                    customPlanningModel.classList.remove('hidden');
+                } else {
+                    customPlanningModel.classList.add('hidden');
+                }
+            });
+            
+            executionModel.addEventListener('change', (e) => {
+                if (e.target.value === 'custom') {
+                    customExecutionModel.classList.remove('hidden');
+                } else {
+                    customExecutionModel.classList.add('hidden');
+                }
+            });
+            
+            reviewModel.addEventListener('change', (e) => {
+                if (e.target.value === 'custom') {
+                    customReviewModel.classList.remove('hidden');
+                } else {
+                    customReviewModel.classList.add('hidden');
+                }
+            });
+            
+            // 初始化时加载保存的代码
+            loadSavedCodes();
             loadSettings();
         });
     </script>
